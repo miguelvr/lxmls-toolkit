@@ -2,7 +2,8 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 from lxmls.deep_learning.utils import Model, glorot_weight_init
-from lxmls.deep_learning.pytorch_models.utils import cast_torch_int, cast_torch_float
+from lxmls.deep_learning.pytorch_models.utils import \
+    cast_torch_int, cast_torch_float
 
 
 class PytorchLogLinear(Model):
@@ -23,7 +24,8 @@ class PytorchLogLinear(Model):
         self.bias = cast_torch_float(self.bias, requires_grad=True)
 
     def _log_forward(self, input=None):
-        """Forward pass of the computation graph in logarithm domain (pytorch)"""
+        """Forward pass of the computation graph in
+        logarithm domain (pytorch)"""
 
         # IMPORTANT: Cast to pytorch format
         input = cast_torch_float(input, requires_grad=False)

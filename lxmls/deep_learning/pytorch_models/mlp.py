@@ -3,7 +3,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from lxmls.deep_learning.mlp import MLP
-from lxmls.deep_learning.pytorch_models.utils import cast_torch_int, cast_torch_float
+from lxmls.deep_learning.pytorch_models.utils import \
+    cast_torch_int, cast_torch_float
 
 
 class PytorchMLP(MLP):
@@ -23,7 +24,9 @@ class PytorchMLP(MLP):
         for n in range(self.num_layers):
             # Get weigths and bias of the layer (even and odd positions)
             weight, bias = self.parameters[n]
-            self.parameters[n] = [cast_torch_float(weight), cast_torch_float(bias)]
+            self.parameters[n] = [
+                cast_torch_float(weight), cast_torch_float(bias)
+            ]
 
     # TODO: Move these outside fo the class as in the numpy case
     def _log_forward(self, input):
