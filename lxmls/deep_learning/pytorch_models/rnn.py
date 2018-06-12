@@ -1,16 +1,10 @@
 from __future__ import division
 import numpy as np
 import torch
-from torch.autograd import Variable
+import torch.nn.functional as F
 from lxmls.deep_learning.rnn import RNN
-
-
-def cast_float(variable):
-    return Variable(torch.from_numpy(variable).float(), requires_grad=True)
-
-
-def cast_int(variable):
-    return Variable(torch.from_numpy(variable).long(), requires_grad=True)
+from lxmls.deep_learning.pytorch_models.utils import \
+    cast_torch_int, cast_torch_float
 
 
 class PytorchRNN(RNN):
@@ -24,7 +18,7 @@ class PytorchRNN(RNN):
         # self.num_layers
         # self.config
         # self.parameters
-        RNN.__init__(self, **config)
+        super(PytorchRNN, self).__init__(**config)
 
         # First parameters are the embeddings
         # instantiate the embedding layer first
@@ -34,11 +28,9 @@ class PytorchRNN(RNN):
         )
 
         # Set its value to the stored weight
-        self.embedding_layer.weight.data = cast_float(self.parameters[0]).data
+        self.embedding_layer.weight = \
+            torch.nn.Parameter(cast_torch_float(self.parameters[0]))
         self.parameters[0] = self.embedding_layer.weight
-
-        # Log softmax
-        self.logsoftmax = torch.nn.LogSoftmax(dim=1)
 
         # Negative-log likelihood
         self.loss = torch.nn.NLLLoss()
@@ -47,13 +39,13 @@ class PytorchRNN(RNN):
         num_parameters = len(self.parameters)
         for index in range(1, num_parameters):
             # Get weigths and bias of the layer (even and odd positions)
-            self.parameters[index] = cast_float(self.parameters[index])
+            self.parameters[index] = cast_torch_float(self.parameters[index])
 
     def predict(self, input=None):
         """
         Predict model outputs given input
         """
-        p_y = np.exp(self._log_forward(input).data.numpy())
+        p_y = np.exp(self._log_forward(input).detach().numpy())
         return np.argmax(p_y, axis=1)
 
     def update(self, input=None, output=None):
@@ -61,12 +53,16 @@ class PytorchRNN(RNN):
         Update model parameters given batch of data
         """
         gradients = self.backpropagation(input, output)
-        learning_rate = self.config['learning_rate']
-        # Update each parameter with SGD rule
-        num_parameters = len(self.parameters)
-        for m in np.arange(num_parameters):
-            # Update weight
-            self.parameters[m].data -= learning_rate * gradients[m]
+
+        # Setting no_grad() flag so that operations over
+        # the gradient are not recorded by autograd
+        with torch.no_grad():
+            learning_rate = self.config['learning_rate']
+            # Update each parameter with SGD rule
+            num_parameters = len(self.parameters)
+            for m in np.arange(num_parameters):
+                # Update weight
+                self.parameters[m] -= learning_rate * gradients[m]
 
     def _log_forward(self, input):
         """
@@ -74,7 +70,7 @@ class PytorchRNN(RNN):
         """
 
         # Ensure the type matches torch type
-        input = Variable(torch.from_numpy(input).long())
+        input = cast_torch_int(input, requires_grad=False)
 
         # Get parameters and sizes
         W_e, W_x, W_h, W_y = self.parameters
@@ -91,7 +87,7 @@ class PytorchRNN(RNN):
         z_e = self.embedding_layer(input)
 
         # Recurrent layer
-        h = Variable(torch.FloatTensor(1, hidden_size).zero_())
+        h = torch.zeros(1, hidden_size)
         hidden_variables = []
         for t in range(nr_steps):
 
@@ -100,7 +96,7 @@ class PytorchRNN(RNN):
                 torch.matmul(h, torch.t(W_h))
 
             # Non-linear (sigmoid)
-            h = torch.sigmoid(z_t)
+            h = F.sigmoid(z_t)
 
             hidden_variables.append(h)
 
@@ -109,7 +105,7 @@ class PytorchRNN(RNN):
         y = torch.matmul(h_out, torch.t(W_y))
 
         # Log-Softmax
-        log_p_y = self.logsoftmax(y)
+        log_p_y = F.log_softmax(y, dim=1)
 
         # End of solution to Exercise 6.2
         # ----------
@@ -121,15 +117,13 @@ class PytorchRNN(RNN):
         Computes the gradients of the network with respect to cross entropy
         error cost
         """
-        output = Variable(
-            torch.from_numpy(output).long(),
-            requires_grad=False
-        )
+        output = cast_torch_int(output, requires_grad=False)
 
-        # Zero gradients
-        for parameter in self.parameters:
-            if parameter.grad is not None:
-                parameter.grad.data.zero_()
+        with torch.no_grad():
+            # Zero gradients
+            for parameter in self.parameters:
+                if parameter.grad is not None:
+                    parameter.grad.zero_()
 
         # Compute negative log-likelihood loss
         log_p_y = self._log_forward(input)
@@ -141,15 +135,15 @@ class PytorchRNN(RNN):
         # Update parameters
         gradient_parameters = []
         for index in range(0, num_parameters):
-            gradient_parameters.append(self.parameters[index].grad.data)
+            gradient_parameters.append(self.parameters[index].grad)
 
         return gradient_parameters
 
 
 class FastPytorchRNN(RNN):
     """
-    Basic RNN with forward-pass and gradient computation in Pytorch. Uses native
-    Pytorch RNN
+    Basic RNN with forward-pass and gradient computation in Pytorch.
+    Uses native Pytorch RNN
     """
 
     def __init__(self, **config):
@@ -158,7 +152,7 @@ class FastPytorchRNN(RNN):
         # self.num_layers
         # self.config
         # self.parameters
-        RNN.__init__(self, **config)
+        super(FastPytorchRNN, self).__init__(**config)
 
         # First parameters are the embeddings
         # instantiate the embedding layer first
@@ -167,7 +161,8 @@ class FastPytorchRNN(RNN):
             config['embedding_size']
         )
         # Set its value to the stored weight
-        self.embedding_layer.weight.data = cast_float(self.parameters[0]).data
+        self.embedding_layer.weight = \
+            torch.nn.Parameter(cast_torch_float(self.parameters[0]))
 
         # RNN
         self.rnn = torch.nn.RNN(
@@ -177,9 +172,6 @@ class FastPytorchRNN(RNN):
         )
         # TODO: Set paremeters here
 
-        # Log softmax
-        self.logsoftmax = torch.nn.LogSoftmax(dim=1)
-
         # Negative-log likelihood
         self.loss = torch.nn.NLLLoss()
 
@@ -187,14 +179,14 @@ class FastPytorchRNN(RNN):
         self.parameters = (
             [self.embedding_layer.weight] +
             list(self.rnn.parameters()) +
-            [cast_float(self.parameters[-1])]
+            [cast_torch_float(self.parameters[-1])]
         )
 
     def predict(self, input=None):
         """
         Predict model outputs given input
         """
-        p_y = np.exp(self._log_forward(input).data.numpy())
+        p_y = np.exp(self._log_forward(input).detach().numpy())
         return np.argmax(p_y, axis=1)
 
     def update(self, input=None, output=None):
@@ -202,12 +194,16 @@ class FastPytorchRNN(RNN):
         Update model parameters given batch of data
         """
         gradients = self.backpropagation(input, output)
-        learning_rate = self.config['learning_rate']
-        # Update each parameter with SGD rule
-        num_parameters = len(self.parameters)
-        for m in np.arange(num_parameters):
-            # Update weight
-            self.parameters[m].data -= learning_rate * gradients[m]
+
+        # Setting no_grad() flag so that operations over
+        # the gradient are not recorded by autograd
+        with torch.no_grad():
+            learning_rate = self.config['learning_rate']
+            # Update each parameter with SGD rule
+            num_parameters = len(self.parameters)
+            for m in np.arange(num_parameters):
+                # Update weight
+                self.parameters[m] -= learning_rate * gradients[m]
 
     def _log_forward(self, input):
         """
@@ -215,7 +211,7 @@ class FastPytorchRNN(RNN):
         """
 
         # Ensure the type matches torch type
-        input = Variable(torch.from_numpy(input).long())
+        input = cast_torch_int(input, requires_grad=False)
 
         # Get parameters and sizes
         W_e, W_x, W_h, W_y = self.parameters
@@ -233,7 +229,7 @@ class FastPytorchRNN(RNN):
         y = torch.matmul(h[:, 0, :], torch.t(W_y))
 
         # Log-Softmax
-        log_p_y = self.logsoftmax(y)
+        log_p_y = F.log_softmax(y, dim=1)
 
         return log_p_y
 
@@ -242,15 +238,13 @@ class FastPytorchRNN(RNN):
         Computes the gradients of the network with respect to cross entropy
         error cost
         """
-        output = Variable(
-            torch.from_numpy(output).long(),
-            requires_grad=False
-        )
+        output = cast_torch_int(output, requires_grad=False)
 
-        # Zero gradients
-        for parameter in self.parameters:
-            if parameter.grad is not None:
-                parameter.grad.data.zero_()
+        with torch.no_grad():
+            # Zero gradients
+            for parameter in self.parameters:
+                if parameter.grad is not None:
+                    parameter.grad.zero_()
 
         # Compute negative log-likelihood loss
         log_p_y = self._log_forward(input)
@@ -262,6 +256,6 @@ class FastPytorchRNN(RNN):
         # Update parameters
         gradient_parameters = []
         for index in range(0, num_parameters):
-            gradient_parameters.append(self.parameters[index].grad.data)
+            gradient_parameters.append(self.parameters[index].grad)
 
         return gradient_parameters
